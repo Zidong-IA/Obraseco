@@ -10,7 +10,7 @@ sql_user = os.environ.get('SQLSERVER_USER')
 sql_pass = os.environ.get('SQLSERVER_PASS')
 
 if not all([sql_host, sql_db, sql_user, sql_pass]):
-    raise RuntimeError("⛔ Faltan variables de entorno necesarias para la conexión SQL Server.")
+    raise RuntimeError("Faltan variables de entorno necesarias para la conexión SQL Server.")
 
 conn_str = (
     f"DRIVER={{ODBC Driver 17 for SQL Server}};"
