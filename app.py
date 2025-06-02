@@ -4,14 +4,23 @@ import os
 
 app = Flask(__name__)
 
+sql_host = os.environ.get('SQLSERVER_HOST')
+sql_db   = os.environ.get('SQLSERVER_DB')
+sql_user = os.environ.get('SQLSERVER_USER')
+sql_pass = os.environ.get('SQLSERVER_PASS')
+
+if not all([sql_host, sql_db, sql_user, sql_pass]):
+    raise RuntimeError("⛔ Faltan variables de entorno necesarias para la conexión SQL Server.")
+
 conn_str = (
     f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-    f"SERVER={os.environ['SQLSERVER_HOST']};"
-    f"DATABASE={os.environ['SQLSERVER_DB']};"
-    f"UID={os.environ['SQLSERVER_USER']};"
-    f"PWD={os.environ['SQLSERVER_PASS']};"
+    f"SERVER={sql_host};"
+    f"DATABASE={sql_db};"
+    f"UID={sql_user};"
+    f"PWD={sql_pass};"
     "Encrypt=no;TrustServerCertificate=yes;"
 )
+
 
 @app.route("/search", methods=["GET"])
 def search():
