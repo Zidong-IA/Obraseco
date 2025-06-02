@@ -1,13 +1,16 @@
 from flask import Flask, request, jsonify
 import pyodbc
+import os
 
 app = Flask(__name__)
 
+
 conn_str = (
-    "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=168.205.92.17\\SQLEXPRESS;"
-    "DATABASE=ObraSeco;"
-    "UID=invitado;PWD=Invi2025;"
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"SERVER={os.environ['SQLSERVER_HOST']};"
+    f"DATABASE={os.environ['SQLSERVER_DB']};"
+    f"UID={os.environ['SQLSERVER_USER']};"
+    f"PWD={os.environ['SQLSERVER_PASS']};"
     "Encrypt=no;TrustServerCertificate=yes;"
 )
 
