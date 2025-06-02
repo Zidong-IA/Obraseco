@@ -12,7 +12,7 @@ RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
     apt-get update && \
     ACCEPT_EULA=Y apt-get install -y msodbcsql17
 
-# Configurar odbc.ini con DSN para SQL Server
+# Configurar odbc.ini con DSN para SQL Server (opcional)
 RUN echo "[TestSQLServer]" > /etc/odbc.ini && \
     echo "Driver = ODBC Driver 17 for SQL Server" >> /etc/odbc.ini && \
     echo "Server = 168.205.92.17\\sqlexpress" >> /etc/odbc.ini && \
@@ -25,11 +25,8 @@ WORKDIR /app
 COPY . /app
 
 # Instalar dependencias Python
-RUN pip3 install pyodbc
-
-CMD ["bash"]
-
-RUN pip3 install flask
+RUN pip3 install flask pyodbc
 
 EXPOSE 5000
+
 CMD ["python3", "/app/app.py"]
