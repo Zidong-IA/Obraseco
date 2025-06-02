@@ -1,9 +1,8 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 import pyodbc
 import os
 
 app = Flask(__name__)
-
 
 conn_str = (
     f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -16,6 +15,10 @@ conn_str = (
 
 @app.route("/search", methods=["GET"])
 def search():
+    token = request.args.get("token")
+    if token != os.environ.get("API_TOKEN"):
+        return abort(403, "Unauthorized")
+
     term = request.args.get("query", "").strip()
     if not term:
         return jsonify({"error": "Query parameter is required."}), 400
@@ -23,7 +26,7 @@ def search():
     try:
         with pyodbc.connect(conn_str, timeout=5) as conn:
             cursor = conn.cursor()
-            query = f"""
+            query = """
                 SELECT TOP 5 Codigo, Descri, PrecioFinal
                 FROM dbo.ConsStock
                 WHERE Descri LIKE ?
