@@ -36,7 +36,7 @@ def search():
         with pyodbc.connect(conn_str, timeout=5) as conn:
             cursor = conn.cursor()
             query = """
-                SELECT TOP 5 Codigo, Descri, PrecioFinal
+                SELECT Codigo, Descri, PrecioFinal
                 FROM dbo.ConsStock
                 WHERE Descri LIKE ?
             """
