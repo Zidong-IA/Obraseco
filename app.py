@@ -44,7 +44,7 @@ def search_multi():
             params = [f"%{t}%" for t in terms]
 
             query = f"""
-                SELECT TOP 100 Codigo, Descri, PrecioFinal
+                SELECT TOP 200 Codigo, Descri, PrecioFinal
                 FROM dbo.ConsStock
                 WHERE {like_clauses}
             """
