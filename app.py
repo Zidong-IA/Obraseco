@@ -77,8 +77,10 @@ def sync_catalog_to_supabase():
         # Obtener todos los productos de SQL Server
         with pyodbc.connect(conn_str, timeout=30) as conn:
             cursor = conn.cursor()
+            
+            # Query usando solo las columnas que existen
             query = """
-                SELECT Codigo, Descri, PrecioFinal, Stock, Categoria
+                SELECT Codigo, Descri, PrecioFinal
                 FROM dbo.ConsStock
                 WHERE PrecioFinal > 0
                 ORDER BY Codigo
@@ -87,7 +89,7 @@ def sync_catalog_to_supabase():
             
             products = []
             for row in cursor.fetchall():
-                codigo, descri, precio, stock, categoria = row
+                codigo, descri, precio = row
                 
                 keywords = extract_keywords(descri)
                 normalized_desc = normalize_text(descri)
@@ -97,8 +99,7 @@ def sync_catalog_to_supabase():
                     'descripcion': descri,
                     'descripcion_normalizada': normalized_desc,
                     'precio_final': float(precio) if precio else 0,
-                    'stock': stock if stock else 0,
-                    'categoria': categoria,
+                    'categoria': None,  # Valor por defecto
                     'keywords': keywords,
                     'updated_at': datetime.now().isoformat()
                 }
@@ -135,7 +136,7 @@ def sync_catalog_to_supabase():
         return True
         
     except Exception as e:
-        print(f"Error en sincronizacion: {str(e)}")
+        print("Error en sincronizacion:", str(e).replace('ó', 'o').replace('í', 'i').replace('á', 'a'))
         return False
 
 @app.route("/search-multi", methods=["GET"])
@@ -159,8 +160,9 @@ def search_multi():
             like_clauses = " OR ".join(["Descri LIKE ?" for _ in terms])
             params = [f"%{t}%" for t in terms]
 
+            # Query simplificado - solo usar columnas que sabemos que existen
             query = f"""
-                SELECT TOP 200 Codigo, Descri, PrecioFinal, Stock, Categoria
+                SELECT TOP 200 Codigo, Descri, PrecioFinal
                 FROM dbo.ConsStock
                 WHERE {like_clauses} AND PrecioFinal > 0
                 ORDER BY PrecioFinal ASC
