@@ -34,6 +34,7 @@ conn_str = (
 )
 
 def normalize_text(text):
+    """Normaliza texto para mejorar búsquedas"""
     if not text:
         return ""
     text = text.lower()
@@ -47,6 +48,7 @@ def normalize_text(text):
     return text
 
 def extract_keywords(description):
+    """Extrae palabras clave de la descripción"""
     if not description:
         return []
     
@@ -64,13 +66,15 @@ def extract_keywords(description):
     return list(extended_keywords)
 
 def sync_catalog_to_supabase():
+    """Sincroniza el catálogo completo desde SQL Server a Supabase"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("Supabase no configurado, saltando sincronización")
         return False
     
     try:
-        print(f"Iniciando sincronización del catálogo - {datetime.now()}")
+        print(f"Iniciando sincronizacion del catalogo - {datetime.now()}")
         
+        # Obtener todos los productos de SQL Server
         with pyodbc.connect(conn_str, timeout=30) as conn:
             cursor = conn.cursor()
             query = """
@@ -99,7 +103,8 @@ def sync_catalog_to_supabase():
                     'updated_at': datetime.now().isoformat()
                 }
                 products.append(product)
-
+        
+        # Limpiar e insertar en Supabase
         headers = {
             'apikey': SUPABASE_KEY,
             'Authorization': f'Bearer {SUPABASE_KEY}',
@@ -126,15 +131,16 @@ def sync_catalog_to_supabase():
                 print(f"Error en lote {i//batch_size + 1}: {response.status_code}")
                 return False
         
-        print(f"Sincronización completada - {total_inserted} productos actualizados")
+        print(f"Sincronizacion completada - {total_inserted} productos actualizados")
         return True
         
     except Exception as e:
-        print(f"Error en sincronización: {str(e)}")
+        print(f"Error en sincronizacion: {str(e)}")
         return False
 
 @app.route("/search-multi", methods=["GET"])
 def search_multi():
+    """Endpoint de búsqueda multi-términos"""
     token = request.args.get("token")
     if token != os.environ.get("API_TOKEN"):
         return abort(403, "Unauthorized")
@@ -178,6 +184,7 @@ def search_multi():
         return jsonify({"error": str(e)}), 500
 
 def run_scheduler():
+    """Ejecuta el scheduler para sincronizacion automatica cada 8 horas"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("Scheduler deshabilitado - Supabase no configurado")
         return
@@ -189,16 +196,16 @@ def run_scheduler():
         time.sleep(60)
 
 if __name__ == "__main__":
-    print("Iniciando aplicación...")
+    print("Iniciando aplicacion...")
     
-    # Sincronización inicial
+    # Sincronizacion inicial
     if SUPABASE_URL and SUPABASE_KEY:
-        print("Iniciando sincronización inicial...")
+        print("Iniciando sincronizacion inicial...")
         Thread(target=sync_catalog_to_supabase).start()
         
-        print("Iniciando scheduler de sincronización cada 8 horas...")
+        print("Iniciando scheduler de sincronizacion cada 8 horas...")
         Thread(target=run_scheduler, daemon=True).start()
     else:
-        print("Supabase no configurado - Solo búsqueda disponible")
+        print("Supabase no configurado - Solo busqueda disponible")
     
     app.run(host="0.0.0.0", port=5000)
