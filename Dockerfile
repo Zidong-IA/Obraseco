@@ -25,7 +25,7 @@ WORKDIR /app
 COPY . /app
 
 # Instalar dependencias Python
-RUN pip3 install flask==2.3.3 pyodbc==4.0.39 requests==2.31.0 schedule==1.2.0
+RUN pip3 install flask pyodbc requests schedule
 
 EXPOSE 5000
 
