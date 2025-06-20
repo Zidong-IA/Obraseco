@@ -98,8 +98,7 @@ def sync_catalog_to_supabase():
                     'codigo': codigo,
                     'descripcion': descri,
                     'descripcion_normalizada': normalized_desc,
-                    'precio_final': float(precio) if precio else 0,
-                    'categoria': None,  # Valor por defecto
+                    'precio_final': float(precio) if precio else 0,                    
                     'keywords': keywords,
                     'updated_at': datetime.now().isoformat()
                 }
