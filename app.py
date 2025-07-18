@@ -162,25 +162,22 @@ def search_multi():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def run_scheduler():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        print("Scheduler deshabilitado - Supabase no configurado")
-        return
-    schedule.every(8).hours.do(sync_catalog_to_supabase)
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+# ⬇️ Corre al arrancar, antes de levantar el servidor
+def launch_background_jobs():
+    if SUPABASE_URL and SUPABASE_KEY:
+        print("Iniciando sincronizacion inicial...")
+        sync_catalog_to_supabase()
 
-# 🚨 MOVER ESTO FUERA DEL if __name__ == "__main__"
-print("Iniciando aplicacion...")
+        print("Iniciando scheduler de sincronizacion cada 8 horas...")
+        def scheduler_loop():
+            schedule.every(8).hours.do(sync_catalog_to_supabase)
+            while True:
+                schedule.run_pending()
+                time.sleep(60)
 
-if SUPABASE_URL and SUPABASE_KEY:
-    print("Iniciando sincronizacion inicial...")
-    Thread(target=sync_catalog_to_supabase).start()
+        Thread(target=scheduler_loop, daemon=True).start()
+    else:
+        print("Supabase no configurado - Solo busqueda disponible")
 
-    print("Iniciando scheduler de sincronizacion cada 8 horas...")
-    Thread(target=run_scheduler, daemon=True).start()
-else:
-    print("Supabase no configurado - Solo busqueda disponible")
-
+launch_background_jobs()
 app.run(host="0.0.0.0", port=5000)
