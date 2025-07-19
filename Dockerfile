@@ -1,26 +1,32 @@
-FROM python:3.11-slim
+FROM ubuntu:18.04
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONIOENCODING=utf-8 \
-    ACCEPT_EULA=Y
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Instala dependencias + agrega repo MS con método moderno (signed-by)
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        curl gnupg2 ca-certificates apt-transport-https unixodbc-dev gcc g++; \
-    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg; \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/microsoft-prod.list; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends msodbcsql18; \
-    rm -rf /var/lib/apt/lists/*
+# Instalar dependencias base
+RUN apt-get update && \
+    apt-get install -y curl gnupg2 apt-transport-https unixodbc unixodbc-dev gcc g++ python3 python3-pip libssl1.1 nano
 
+# Agregar repositorio Microsoft
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
+    curl -o /etc/apt/sources.list.d/mssql-release.list https://packages.microsoft.com/config/ubuntu/18.04/prod.list && \
+    apt-get update && \
+    ACCEPT_EULA=Y apt-get install -y msodbcsql17
+
+# Configurar odbc.ini con DSN para SQL Server (opcional)
+RUN echo "[TestSQLServer]" > /etc/odbc.ini && \
+    echo "Driver = ODBC Driver 17 for SQL Server" >> /etc/odbc.ini && \
+    echo "Server = 168.205.92.17\\sqlexpress" >> /etc/odbc.ini && \
+    echo "Database = ObraSeco" >> /etc/odbc.ini && \
+    echo "Encrypt = no" >> /etc/odbc.ini && \
+    echo "TrustServerCertificate = yes" >> /etc/odbc.ini
+
+# Directorio de trabajo y copia de archivos
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . /app
 
-COPY . .
+# Instalar dependencias Python
+RUN pip3 install flask pyodbc requests schedule
 
-# Gunicorn (Railway setea PORT)
-CMD exec gunicorn -b 0.0.0.0:${PORT:-5000} app:app --workers=1 --threads=4 --timeout=120
+EXPOSE 5000
+
+CMD ["python3", "/app/app.py"]
