@@ -1,128 +1,212 @@
-import os, re
-from datetime import datetime
-import pyodbc, requests
 from flask import Flask, request, jsonify, abort
+from decimal import Decimal
+import pyodbc
+import os
+import requests
+import re
+import schedule
+import time
+from threading import Thread
+from datetime import datetime
 
 app = Flask(__name__)
 
-# ================== ENTORNO ==================
-SQL_HOST = os.getenv("SQLSERVER_HOST")          # 168.205.92.17
-SQL_PORT = os.getenv("SQLSERVER_PORT", "1433")
-SQL_DB   = os.getenv("SQLSERVER_DB")
-SQL_USER = os.getenv("SQLSERVER_USER")
-SQL_PASS = os.getenv("SQLSERVER_PASS")
+# Configuración SQL Server
+sql_host = os.environ.get('SQLSERVER_HOST')
+sql_db   = os.environ.get('SQLSERVER_DB')
+sql_user = os.environ.get('SQLSERVER_USER')
+sql_pass = os.environ.get('SQLSERVER_PASS')
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-API_TOKEN    = os.getenv("API_TOKEN")
+# Configuración Supabase
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 
-if not all([SQL_HOST, SQL_DB, SQL_USER, SQL_PASS]):
-    raise RuntimeError("Faltan variables SQL (HOST/DB/USER/PASS).")
+if not all([sql_host, sql_db, sql_user, sql_pass]):
+    raise RuntimeError("Faltan variables de entorno necesarias para la conexión SQL Server.")
 
-CONN_STR = (
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    f"SERVER={SQL_HOST},{SQL_PORT};"
-    f"DATABASE={SQL_DB};UID={SQL_USER};PWD={SQL_PASS};"
-    "Encrypt=yes;TrustServerCertificate=yes;Connection Timeout=30;"
+conn_str = (
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"SERVER={sql_host};"
+    f"DATABASE={sql_db};"
+    f"UID={sql_user};"
+    f"PWD={sql_pass};"
+    "Encrypt=no;TrustServerCertificate=yes;"
 )
 
-def norm(txt: str) -> str:
-    if not txt: return ""
-    txt = txt.lower()
-    for a,b in {'á':'a','é':'e','í':'i','ó':'o','ú':'u','ñ':'n','ü':'u'}.items():
-        txt = txt.replace(a,b)
-    return re.sub(r'\s+',' ',txt).strip()
-
-# ============== OBTENER DESDE SQL SERVER ==============
-def fetch_from_sql():
-    sql = """
-        SELECT Codigo, Descri, PrecioFinal
-        FROM dbo.ConsStock
-        WHERE PrecioFinal > 0
-        ORDER BY Codigo
-    """
-    items = []
-    with pyodbc.connect(CONN_STR, timeout=30) as c:
-        cur = c.cursor()
-        cur.execute(sql)
-        for codigo, descri, precio in cur.fetchall():
-            items.append({
-                "codigo": codigo,
-                "descripcion": descri,
-                "descripcion_normalizada": norm(descri),
-                "precio_final": float(precio or 0),
-                "updated_at": datetime.utcnow().isoformat()
-            })
-    return items
-
-# ============== SUPABASE ==============
-def sb_headers():
-    return {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates"
+def normalize_text(text):
+    """Normaliza texto para mejorar búsquedas"""
+    if not text:
+        return ""
+    text = text.lower()
+    replacements = {
+        'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+        'ñ': 'n', 'ü': 'u'
     }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
-def sb_delete_all():
-    # borra todo usando filtro universal
-    url = f"{SUPABASE_URL}/rest/v1/productos_catalogo"
-    r = requests.delete(url, headers=sb_headers(), params={"codigo":"not.is.null"})
-    return r.status_code in (200,204)
+def extract_keywords(description):
+    """Extrae palabras clave de la descripción"""
+    if not description:
+        return []
+    
+    stop_words = {'de', 'la', 'el', 'en', 'con', 'para', 'por', 'un', 'una', 'y', 'o', 'del', 'las', 'los'}
+    words = re.findall(r'\b\w+\b', normalize_text(description))
+    keywords = [w for w in words if len(w) > 2 and w not in stop_words]
+    
+    extended_keywords = set(keywords)
+    for word in keywords:
+        if word.endswith('s') and len(word) > 3:
+            extended_keywords.add(word[:-1])
+        else:
+            extended_keywords.add(word + 's')
+    
+    return list(extended_keywords)
 
-def sb_upsert(batch):
-    url = f"{SUPABASE_URL}/rest/v1/productos_catalogo"
-    r = requests.post(url, headers=sb_headers(), json=batch)
-    return r.status_code in (200,201,204)
-
-# ============== RUTAS ==============
-@app.route("/health")
-def health():
-    return {"ok": True, "time": datetime.utcnow().isoformat()}
-
-@app.route("/sync", methods=["POST"])
-def sync():
-    if request.headers.get("X-API-TOKEN") != API_TOKEN:
-        abort(403)
-    if not (SUPABASE_URL and SUPABASE_KEY):
-        return {"error":"Supabase no configurado"}, 500
+def sync_catalog_to_supabase():
+    """Sincroniza el catálogo completo desde SQL Server a Supabase"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("Supabase no configurado, saltando sincronización")
+        return False
+    
     try:
-        items = fetch_from_sql()
-        if not sb_delete_all():
-            return {"error":"delete falló"}, 500
-        total = 0
-        size = 700
-        for i in range(0, len(items), size):
-            chunk = items[i:i+size]
-            if not sb_upsert(chunk):
-                return {"error": f"upsert falló bloque {i}"}, 500
-            total += len(chunk)
-        return {"ok": True, "total": total}
+        print(f"Iniciando sincronizacion del catalogo - {datetime.now()}")
+        
+        # Obtener todos los productos de SQL Server
+        with pyodbc.connect(conn_str, timeout=30) as conn:
+            cursor = conn.cursor()
+            
+            # Query usando solo las columnas que existen
+            query = """
+                SELECT Codigo, Descri, PrecioFinal
+                FROM dbo.ConsStock
+                WHERE PrecioFinal > 0
+                ORDER BY Codigo
+            """
+            cursor.execute(query)
+            
+            products = []
+            for row in cursor.fetchall():
+                codigo, descri, precio = row
+                
+                keywords = extract_keywords(descri)
+                normalized_desc = normalize_text(descri)
+                
+                product = {
+                    'codigo': codigo,
+                    'descripcion': descri,
+                    'descripcion_normalizada': normalized_desc,
+                    'precio_final': float(precio) if precio else 0,                    
+                    'keywords': keywords,
+                    'updated_at': datetime.now().isoformat()
+                }
+                products.append(product)
+        
+        # Limpiar e insertar en Supabase
+        headers = {
+            'apikey': SUPABASE_KEY,
+            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Eliminar registros existentes
+        delete_url = f"{SUPABASE_URL}/rest/v1/productos_catalogo"
+        requests.delete(delete_url, headers=headers, params={'codigo': 'neq.'})
+        
+        # Insertar por lotes de 1000
+        batch_size = 1000
+        total_inserted = 0
+        
+        for i in range(0, len(products), batch_size):
+            batch = products[i:i+batch_size]
+            insert_url = f"{SUPABASE_URL}/rest/v1/productos_catalogo"
+            response = requests.post(insert_url, headers=headers, json=batch)
+            
+            if response.status_code in [200, 201]:
+                total_inserted += len(batch)
+                print(f"Lote {i//batch_size + 1}: {len(batch)} productos insertados")
+            else:
+                print(f"Error en lote {i//batch_size + 1}: {response.status_code}")
+                return False
+        
+        print(f"Sincronizacion completada - {total_inserted} productos actualizados")
+        return True
+        
     except Exception as e:
-        return {"error": str(e)}, 500
+        print("Error en sincronizacion:", str(e).replace('ó', 'o').replace('í', 'i').replace('á', 'a'))
+        return False
 
-@app.route("/search")
-def search():
-    if request.args.get("token") != API_TOKEN:
-        abort(403)
-    q = request.args.get("q","").strip()
-    if not q:
-        return {"error":"falta q"}, 400
+@app.route("/search-multi", methods=["GET"])
+def search_multi():
+    """Endpoint de búsqueda multi-términos"""
+    token = request.args.get("token")
+    if token != os.environ.get("API_TOKEN"):
+        return abort(403, "Unauthorized")
+
+    query_param = request.args.get("query", "").strip()
+    if not query_param:
+        return jsonify({"error": "Query parameter is required."}), 400
+
+    terms = [t.strip() for t in query_param.split(",") if t.strip()]
+    if not terms:
+        return jsonify({"error": "No valid terms provided."}), 400
+
     try:
-        sql = """
-            SELECT TOP 50 Codigo, Descri, PrecioFinal
-            FROM dbo.ConsStock
-            WHERE Descri LIKE ? AND PrecioFinal > 0
-            ORDER BY PrecioFinal ASC
-        """
-        with pyodbc.connect(CONN_STR, timeout=10) as c:
-            cur = c.cursor()
-            cur.execute(sql, f"%{q}%")
-            rows = [{"Codigo":r[0], "Descri":r[1], "PrecioFinal":float(r[2] or 0)} for r in cur.fetchall()]
-        return {"total": len(rows), "results": rows}
-    except Exception as e:
-        return {"error": str(e)}, 500
+        with pyodbc.connect(conn_str, timeout=5) as conn:
+            cursor = conn.cursor()
+            like_clauses = " OR ".join(["Descri LIKE ?" for _ in terms])
+            params = [f"%{t}%" for t in terms]
 
-# SOLO local
+            # Query simplificado - solo usar columnas que sabemos que existen
+            query = f"""
+                SELECT TOP 200 Codigo, Descri, PrecioFinal
+                FROM dbo.ConsStock
+                WHERE {like_clauses} AND PrecioFinal > 0
+                ORDER BY PrecioFinal ASC
+            """
+            cursor.execute(query, params)
+            columns = [c[0] for c in cursor.description]
+            results = []
+            for row in cursor.fetchall():
+                record = dict(zip(columns, row))
+                for key, value in record.items():
+                    if isinstance(value, Decimal):
+                        record[key] = float(value)
+                results.append(record)
+
+            return jsonify({
+                "total": len(results),
+                "results": results
+            })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def run_scheduler():
+    """Ejecuta el scheduler para sincronizacion automatica cada 8 horas"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("Scheduler deshabilitado - Supabase no configurado")
+        return
+    
+    schedule.every(8).hours.do(sync_catalog_to_supabase)
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT","5000")))
+    print("Iniciando aplicacion...")
+    
+    # Sincronizacion inicial
+    if SUPABASE_URL and SUPABASE_KEY:
+        print("Iniciando sincronizacion inicial...")
+        Thread(target=sync_catalog_to_supabase).start()
+        
+        print("Iniciando scheduler de sincronizacion cada 8 horas...")
+        Thread(target=run_scheduler, daemon=True).start()
+    else:
+        print("Supabase no configurado - Solo busqueda disponible")
+    
+    app.run(host="0.0.0.0", port=5000)
