@@ -1,4 +1,4 @@
-flask
-pyodbc
-requests
-gunicorn
+flask==2.3.3
+pyodbc==4.0.39
+requests==2.31.0
+schedule==1.2.0
