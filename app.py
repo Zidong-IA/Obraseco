@@ -29,6 +29,7 @@ conn_str = (
     f"PWD={sql_pass}"
 )
 
+# Función para normalizar descripciones
 def normalizar_descripcion(texto):
     if texto is None:
         return ''
@@ -37,8 +38,10 @@ def normalizar_descripcion(texto):
     texto = re.sub(r'[^\w\s]', '', texto)
     return texto.strip()
 
+# Sincronización
 def sync_catalogo():
-    with pyodbc.connect(conn_str) as conn:
+    try:
+        conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
         cursor.execute("SELECT codigo, descripcion, precio_final FROM productos_catalogo")
         rows = cursor.fetchall()
@@ -57,7 +60,6 @@ def sync_catalogo():
                 "precio_final": precio_final,
             })
 
-        # Subir a Supabase
         headers = {
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -73,18 +75,31 @@ def sync_catalogo():
             "count": len(productos)
         }
 
-# Ruta para actualizar manualmente
+    except Exception as e:
+        print(f"[ERROR SYNC] {e}")
+        return {
+            "status": 500,
+            "error": str(e)
+        }
+
+# Ruta para ejecución manual
 @app.route('/sync', methods=['GET'])
 def trigger_sync():
     result = sync_catalogo()
     return jsonify(result)
 
-# Sincroniza automáticamente al iniciar
+# Al iniciar el servidor
 @app.before_first_request
 def auto_sync():
     print("Ejecutando sincronización automática al iniciar...")
     sync_catalogo()
 
-# Puerto de ejecución
+# Manejador global de errores
+@app.errorhandler(Exception)
+def handle_error(e):
+    print(f"[ERROR GENERAL] {e}")
+    return jsonify({'error': str(e)}), 500
+
+# Ejecutar local
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
