@@ -29,7 +29,6 @@ conn_str = (
     f"PWD={sql_pass}"
 )
 
-# Función para normalizar descripciones
 def normalizar_descripcion(texto):
     if texto is None:
         return ''
@@ -38,10 +37,8 @@ def normalizar_descripcion(texto):
     texto = re.sub(r'[^\w\s]', '', texto)
     return texto.strip()
 
-# Sincronización
 def sync_catalogo():
-    try:
-        conn = pyodbc.connect(conn_str)
+    with pyodbc.connect(conn_str) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT codigo, descripcion, precio_final FROM productos_catalogo")
         rows = cursor.fetchall()
@@ -75,31 +72,17 @@ def sync_catalogo():
             "count": len(productos)
         }
 
-    except Exception as e:
-        print(f"[ERROR SYNC] {e}")
-        return {
-            "status": 500,
-            "error": str(e)
-        }
-
-# Ruta para ejecución manual
 @app.route('/sync', methods=['GET'])
 def trigger_sync():
     result = sync_catalogo()
     return jsonify(result)
 
-# Al iniciar el servidor
 @app.before_first_request
 def auto_sync():
-    print("Ejecutando sincronización automática al iniciar...")
-    sync_catalogo()
+    try:
+        _ = sync_catalogo()
+    except Exception as e:
+        print(f"Error en sincronización automática: {e}")
 
-# Manejador global de errores
-@app.errorhandler(Exception)
-def handle_error(e):
-    print(f"[ERROR GENERAL] {e}")
-    return jsonify({'error': str(e)}), 500
-
-# Ejecutar local
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
