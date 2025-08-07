@@ -15,7 +15,7 @@ SQL_PASS = os.environ.get('SQLSERVER_PASS')
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 
-API_TOKEN    = os.environ.get('API_TOKEN')   # usamos la variable que ya tenés
+API_TOKEN       = os.environ.get('API_TOKEN')   # usamos la variable que ya tenés
 SYNC_EVERY_HOURS = int(os.environ.get('SYNC_EVERY_HOURS', '8'))
 
 BATCH_SIZE = 1000
@@ -58,8 +58,10 @@ def extract_keywords(description):
 def dec_to_float(v):
     if isinstance(v, Decimal):
         return float(v)
-    try: return float(v)
-    except: return 0.0
+    try:
+        return float(v)
+    except:
+        return 0.0
 
 def norm_code(c):
     return "" if c is None else str(c).strip()
@@ -86,7 +88,7 @@ def fetch_products():
             "descripcion_normalizada": normalize_text(descri),
             "precio_final": dec_to_float(precio),
             "keywords": extract_keywords(descri),
-            "updated_at": now_iso  # por si no hay trigger
+            "updated_at": now_iso
         }
     return list(dedup.values())
 
@@ -154,37 +156,60 @@ def sync_now():
     ok = sync_catalog()
     return {"ok": ok}, (200 if ok else 500)
 
+# ================== RUTA MODIFICADA: search-multi ==================
 @app.route("/search-multi")
 def search_multi():
     token = request.args.get("token")
     if token != API_TOKEN:
         return abort(403)
-    q = request.args.get("query","").strip()
-    if not q:
-        return {"error":"query vacio"}, 400
-    terms = [t.strip() for t in q.split(",") if t.strip()]
-    if not terms:
-        return {"error":"sin terminos"}, 400
+
+    # parámetros opcionales
+    q_descr = request.args.get("query", "").strip()
+    q_code  = request.args.get("code", "").strip()
+
+    if not q_descr and not q_code:
+        return {"error":"query y/o code vacíos"}, 400
+
     try:
         with pyodbc.connect(CONN_STR, timeout=45) as conn:
             cur = conn.cursor()
-            like_clause = " OR ".join(["Descri LIKE ?" for _ in terms])
-            params = [f"%{t}%" for t in terms]
-            cur.execute(f"""
+
+            clauses = []
+            params  = []
+
+            # búsqueda por descripción (like en cada término)
+            if q_descr:
+                terms = [t for t in re.split("[, ]+", q_descr) if t]
+                like_clauses = []
+                for t in terms:
+                    like_clauses.append("Descri LIKE ?")
+                    params.append(f"%{t}%")
+                clauses.append("(" + " OR ".join(like_clauses) + ")")
+
+            # búsqueda por código
+            if q_code:
+                clauses.append("CAST(Codigo AS VARCHAR) LIKE ?")
+                params.append(f"%{q_code}%")
+
+            where_sql = " AND ".join(clauses)
+            sql = f"""
                 SELECT TOP 200 Codigo, Descri, PrecioFinal
                 FROM dbo.ConsStock
-                WHERE ({like_clause}) AND PrecioFinal > 0
+                WHERE {where_sql} AND PrecioFinal > 0
                 ORDER BY PrecioFinal ASC
-            """, params)
+            """
+            cur.execute(sql, params)
             rows = cur.fetchall()
+
         out = []
         for codigo, descri, precio in rows:
             out.append({
-                "Codigo": norm_code(codigo),
-                "Descri": (descri or "").strip(),
+                "Codigo":      norm_code(codigo),
+                "Descri":      (descri or "").strip(),
                 "PrecioFinal": dec_to_float(precio)
             })
         return jsonify({"total": len(out), "results": out})
+
     except Exception as e:
         log(f"SEARCH EXCEPTION {repr(e)}")
         return {"error":"internal"}, 500
